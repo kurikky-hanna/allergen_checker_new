@@ -8,7 +8,7 @@ import re
 os.environ["TABULA_USE_JPYPE"] = "0"
 os.environ["TABULA_JAR"] = r"C:\tabula\tabula.jar"
 import streamlit as st
-from pdf_lojic import *
+
 
 
 def get_writable_path(filename):
