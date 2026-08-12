@@ -1,0 +1,7 @@
+os
+sys
+pandas
+sqlite3
+pdfplumber
+tabula
+re
