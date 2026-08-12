@@ -6,7 +6,7 @@ import sys
 import pandas as pd
 import pdfplumber
 import streamlit as st
-import tabula
+from tabula.io import read_pdf
 
 
 
@@ -123,7 +123,7 @@ allergen_headers = [
 # ===== table_13 を作る処理 =====
 def create_table13(pdf_path):
     try:
-        dfs = tabula.read_pdf(
+        dfs = read_pdf(
             pdf_path, pages="all", multiple_tables=True, lattice=True
         )
 
@@ -190,7 +190,7 @@ def build_date_dish_map(pdf_path):
 
     try:
         with pdfplumber.open(pdf_path) as pdf:
-            all_dfs = tabula.read_pdf(
+            all_dfs = read_pdf(
                 pdf_path, pages="all", multiple_tables=True, lattice=True
             )
 
