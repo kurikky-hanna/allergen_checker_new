@@ -308,7 +308,7 @@ st.set_page_config(
 
 st.title("給食アレルゲン調査機（Streamlit版）")
 uploaded = st.file_uploader("PDFを選んでください", type=["pdf"])
-st.write("食物アレルギー原因食品一覧表のPDFを入手して")
+st.write("食物アレルギー原因食品一覧表のPDFを入手して、アレルゲンを選択してください")
 
 if uploaded:
     pdf_bytes = uploaded.getvalue()
@@ -374,9 +374,3 @@ if uploaded:
                 "アレルゲンを1つ以上選択してから「決定」を押してね！"
             )
 
-st.write("---")
-st.write("製作者：木村 陸")
-st.write(
-    '何か不具合がありましたら、こちらのGmailアドレスにお申し付けください   address:"rikukimura0603@gmail.com"'
-)
-st.write("質問には答えます（15日以内には完了させます）")
