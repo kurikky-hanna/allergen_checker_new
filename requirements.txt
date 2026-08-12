@@ -1,4 +1,4 @@
 streamlit
 pandas
 pdfplumber
-tabula-py
+tabula-py==2.9.3
