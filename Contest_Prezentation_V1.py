@@ -116,7 +116,7 @@ def save_table13(all_dfs):
         return False
 
 
-# ===== PDF解析ロジック =====
+# ===== PDF解析ロジック（pdfplumberのみで完全動く版） =====
 def build_date_dish_map(pdf_path, all_dfs):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -153,18 +153,7 @@ def build_date_dish_map(pdf_path, all_dfs):
 
                     dish_str = str(dish).strip().replace("\n", "")
 
-                    # 💡 ヘッダーの残骸（項目名）を完全ガード
-                    if any(
-                        keyword in dish_str
-                        for keyword in [
-                            "料理名",
-                            "食品名",
-                            "品名",
-                            "アレルゲン",
-                            "特定原材料",
-                            "分類",
-                        ]
-                    ):
+                    if "料理名" in dish_str or "食品名" in dish_str or "品名" in dish_str:
                         continue
 
                     dish_str = re.sub(r"【\s*特例\s*[:：][^】]*】", "", dish_str)
@@ -184,16 +173,8 @@ def build_date_dish_map(pdf_path, all_dfs):
                             pass
 
                     for allergen in allergen_headers:
-                        cell = (
-                            str(row.get(allergen, "")).strip().replace("\n", "")
-                        )
-
-                        if cell == allergen or "特定原材料" in cell:
-                            continue
-
-                        if any(
-                            mark in cell for mark in ["○", "▲", "☒", "O", "0"]
-                        ):
+                        cell = str(row.get(allergen, "")).strip().replace("\n", "")
+                        if any(mark in cell for mark in ["○", "▲", "☒", "O", "0"]):
                             cur.execute(
                                 "INSERT INTO menu_allergens (date, dish, allergen) VALUES (?, ?, ?)",
                                 (date_str, dish_str, allergen),
@@ -244,6 +225,7 @@ def process_pdf(pdf_path):
     init_db()
     clear_db()
 
+    # 💡 pdfplumber だけで表（テーブル）を全ページ抽出する！
     all_dfs = []
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -276,31 +258,37 @@ uploaded = st.file_uploader("PDFを選んでください", type=["pdf"])
 st.write("食物アレルギー原因食品一覧表のPDFを入手して")
 
 if uploaded:
-    # 💡 【重複読み込み防止】ファイルのハッシュ値で同一ファイルかチェック
+    # 1. アップロードされたPDFを一時保存して解析処理を動かす
+    temp_pdf_path = get_writable_path("temp_uploaded.pdf")
     file_bytes = uploaded.getbuffer()
-    file_hash = hashlib.md5(file_bytes).hexdigest()
+    
+    with open(temp_pdf_path, "wb") as f:
+        f.write(file_bytes)
 
-    # セッションで「処理済みハッシュ」を管理して、未処理の時だけ解析を実行
-    if "processed_hash" not in st.session_state or st.session_state["processed_hash"] != file_hash:
-        temp_pdf_path = get_writable_path("temp_uploaded.pdf")
-        with open(temp_pdf_path, "wb") as f:
-            f.write(file_bytes)
+    # 2. 解析アニメーションを出して実行
+    with st.spinner("PDFを解析中...少々お待ちください"):
+        process_pdf(temp_pdf_path)
 
-        with st.spinner("PDFを解析中...少々お待ちください"):
-            process_pdf(temp_pdf_path)
-
-        # 解析が完了したらハッシュを記録
-        st.session_state["processed_hash"] = file_hash
-
-    # データベースから日付一覧とアレルゲン一覧を取得
+    # 3. データベースから日付一覧とアレルゲン一覧を取得
+   # 3. データベースから日付一覧とアレルゲン一覧を取得
     conn = sqlite3.connect(DB_PATH)
     df_dates = pd.read_sql("SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn)
     df_allergen = pd.read_sql("SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn)
     conn.close()
 
+    # --------------------------------------------------
+    # 🎉 【ここを追加！】PDFから検出されたアレルゲンを一覧表示
+    # --------------------------------------------------
+    if not df_allergen.empty:
+        # アレルゲン名を「, 」でつなぐ（例：卵, 乳, 小麦, さば）
+        allergen_list_str = "、".join(df_allergen["name"].tolist())
+        st.success(f"✅ **このPDFから検出されたアレルゲン（全{len(df_allergen)}種）：**\n\n{allergen_list_str}")
+    else:
+        st.warning("⚠️ アレルゲンが検出されませんでした。")
+    # --------------------------------------------------
+
     # タブで「日付から探す」と「アレルゲンから探す」を切り替え
     tab1, tab2 = st.tabs(["📅 日付から探す", "🍔 アレルゲンから探す"])
-
     # --------------------------------------------------
     # タブ1: 日付を選択してアレルゲンを表示
     # --------------------------------------------------
@@ -320,12 +308,13 @@ if uploaded:
                         params=[selected_date]
                     )
                     conn.close()
-
+                    
                     if not df_day_menu.empty:
                         st.subheader(f"【{selected_date}】のアレルゲン別一覧")
                         grouped = df_day_menu.groupby("アレルゲン")["料理名"].unique()
-
+                        
                         for allergen_name, dishes in grouped.items():
+                            
                             with st.expander(f"📌 {allergen_name}（{len(dishes)}品）"):
                                 for dish in dishes:
                                     st.write(f"└─ {dish}")
