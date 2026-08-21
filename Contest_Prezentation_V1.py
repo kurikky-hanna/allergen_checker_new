@@ -282,7 +282,7 @@ if uploaded:
     if not df_allergen.empty:
         # アレルゲン名を「, 」でつなぐ（例：卵, 乳, 小麦, さば）
         allergen_list_str = "、".join(df_allergen["name"].tolist())
-        st.success(f"✅ **このPDFから検出されたアレルゲン（全{len(df_allergen)}種）：**\n\n{allergen_list_str}")
+        st.success(f"✅ **このPDFから検出されたアレルゲン（全{len(df_allergen)}種）")
     else:
         st.warning("⚠️ アレルゲンが検出されませんでした。")
     # --------------------------------------------------
