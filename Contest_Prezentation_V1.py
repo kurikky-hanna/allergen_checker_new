@@ -258,38 +258,53 @@ uploaded = st.file_uploader("PDFを選んでください", type=["pdf"])
 st.write("食物アレルギー原因食品一覧表のPDFを入手して")
 
 if uploaded:
-    # 1. アップロードされたPDFを一時保存して解析処理を動かす
-    temp_pdf_path = get_writable_path("temp_uploaded.pdf")
+    # 💡 【重複読み込み防止】ファイルのハッシュ値で同一ファイルかチェック
     file_bytes = uploaded.getbuffer()
-    
-    with open(temp_pdf_path, "wb") as f:
-        f.write(file_bytes)
+    file_hash = hashlib.md5(file_bytes).hexdigest()
 
-    # 2. 解析アニメーションを出して実行
-    with st.spinner("PDFを解析中...少々お待ちください"):
-        process_pdf(temp_pdf_path)
+    # セッションで「処理済みハッシュ」を管理して、未処理の時だけ解析を実行！
+    if (
+        "processed_hash" not in st.session_state
+        or st.session_state["processed_hash"] != file_hash
+    ):
+        temp_pdf_path = get_writable_path("temp_uploaded.pdf")
+        with open(temp_pdf_path, "wb") as f:
+            f.write(file_bytes)
 
-    # 3. データベースから日付一覧とアレルゲン一覧を取得
-   # 3. データベースから日付一覧とアレルゲン一覧を取得
+        with st.spinner("PDFを解析中...少々お待ちください"):
+            process_pdf(temp_pdf_path)
+
+        # 解析が完了したらハッシュを記録
+        st.session_state["processed_hash"] = file_hash
+
+    # 3. データベースから日付一覧（数字順ソート）とアレルゲン一覧を取得
     conn = sqlite3.connect(DB_PATH)
-    df_dates = pd.read_sql("SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn)
-    df_allergen = pd.read_sql("SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn)
+    df_dates = pd.read_sql(
+        """
+        SELECT DISTINCT date 
+        FROM menu_allergens 
+        ORDER BY 
+            CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
+            CAST(substr(date, instr(date, '/') + 1) AS INTEGER)
+        """,
+        conn,
+    )
+    df_allergen = pd.read_sql(
+        "SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn
+    )
     conn.close()
 
-    # --------------------------------------------------
-    # 🎉 【ここを追加！】PDFから検出されたアレルゲンを一覧表示
-    # --------------------------------------------------
+    # 🎉 【検出されたアレルゲン一覧を表示】
     if not df_allergen.empty:
-        # アレルゲン名を「, 」でつなぐ（例：卵, 乳, 小麦, さば）
         allergen_list_str = "、".join(df_allergen["name"].tolist())
-        st.success(f"✅ **このPDFから検出されたアレルゲン（全{len(df_allergen)}種）")
+        st.success(
+            f"✅ **このPDFから検出されたアレルゲン（全{len(df_allergen)}種）：**\n\n{allergen_list_str}"
+        )
     else:
         st.warning("⚠️ アレルゲンが検出されませんでした。")
-    # --------------------------------------------------
 
     # タブで「日付から探す」と「アレルゲンから探す」を切り替え
-    tab1, tab2 = st.tabs(["📅 日付から探す", "🍔 アレルゲンから探す"])
-    # --------------------------------------------------
+    tab1, tab2 = st.tabs(["📅 日付から探す", "🍔 アレルゲンから探す"])    # --------------------------------------------------
     # タブ1: 日付を選択してアレルゲンを表示
     # --------------------------------------------------
     with tab1:
