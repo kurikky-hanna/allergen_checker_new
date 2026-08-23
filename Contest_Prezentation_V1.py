@@ -6,7 +6,9 @@ import sys
 import pandas as pd
 import pdfplumber
 import streamlit as st
+from datetime import datetime
 
+# 曜日のリストを用意（0:月, 1:火, 2:水, 3:木, 4:金, 5:土, 6:日）
 
 def get_writable_path(filename):
     if getattr(sys, "frozen", False):
@@ -120,13 +122,23 @@ def save_table13(all_dfs):
 def build_date_dish_map(pdf_path, all_dfs):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-
+    WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
                 text = page.extract_text()
                 if not text:
                     continue
+                year_default=datetime.now().year
+                year_match = re.search(r"(20\d{2})\s*年", text)
+                date_match = re.search(r"(\d+)月(\d+)日", text)
+                if year_match:
+                    year=int(year_match.group(1))
+                else:
+                    reiwa_match = re.search(r"令和\s*(\d+|元)\s*年", text)
+                    if reiwa_match:
+                        r_num = 1 if reiwa_match.group(1) == "元" else int(reiwa_match.group(1))
+                        year_default = 2018 + r_num  # 令和1年 = 2019年
 
                 date_match = re.search(r"(\d+)月(\d+)日", text)
                 if not date_match:
@@ -134,7 +146,16 @@ def build_date_dish_map(pdf_path, all_dfs):
 
                 month = int(date_match.group(1))
                 day = int(date_match.group(2))
-                date_str = f"{month}/{day}"
+                # 💡 3. 年・月・日から曜日を計算して「2026/7/10(金)」または「7/10(金)」の形式を作る
+                try:
+                    dt = datetime(year_default, month, day)
+                    w_str = WEEKDAYS[dt.weekday()]
+                    # 画面表示用の日付文字列（年を含める場合は f"{year}/{month}/{day}({w_str})" ）
+                    date_str = f"{month}/{day}({w_str})"
+                except ValueError:
+                     # 万が一存在しない日付（2/31など）が取れてしまった時のガード
+                    date_str = f"{month}/{day}"
+                    
 
                 if page_num >= len(all_dfs):
                     continue
@@ -304,7 +325,8 @@ if uploaded:
         st.warning("⚠️ アレルゲンが検出されませんでした。")
 
     # タブで「日付から探す」と「アレルゲンから探す」を切り替え
-    tab1, tab2 = st.tabs(["📅 日付から探す", "🍔 アレルゲンから探す"])    # --------------------------------------------------
+    # タブを3つに増やす！
+    tab1, tab2, tab3 = st.tabs(["📅 カレンダー(ボタン)", "🍔 アレルゲンから探す","📅 日付(リスト)"])    # --------------------------------------------------
     # タブ1: 日付を選択してアレルゲンを表示
     # --------------------------------------------------
     with tab1:
@@ -313,7 +335,7 @@ if uploaded:
             
             selected_date = st.selectbox("日付を選択", df_dates["date"])
             submitted_date = st.form_submit_button("決定")
-
+            
             if submitted_date:
                 if selected_date:
                     conn = sqlite3.connect(DB_PATH)
@@ -369,7 +391,47 @@ if uploaded:
                 conn.close()
             else:
                 st.warning("アレルゲンを1つ以上選択してから「決定」を押してね！")
+# --------------------------------------------------
+    # タブ3: グリッドボタン式カレンダー（Tkinter風再現）
+    # --------------------------------------------------
+    with tab3:
+        st.write("日付のボタンを押すと、その日のアレルゲンが表示されるよ！")
 
+        # 1〜31日までのボタンを7列（月〜日イメージ）で配置
+        cols = st.columns(7)
+
+        conn = sqlite3.connect(DB_PATH)
+
+        for day in range(1, 32):
+            # 7列ごとに改行（0〜6列目を順番に使う）
+            col_idx = (day - 1) % 7
+            with cols[col_idx]:
+                # DBから "7/10%" 形式で検索（月を跨ぐ場合は当月などの検索条件に拡張可能）
+                search_pattern = f"%/{day}(%"
+                df_day_menu = pd.read_sql(
+                    "SELECT dish AS 料理名, allergen AS アレルゲン, date FROM menu_allergens WHERE date LIKE ?",
+                    conn,
+                    params=[search_pattern],
+                )
+
+                if not df_day_menu.empty:
+                    date_label = df_day_menu["date"].iloc[0]  # 例: 7/10(金)
+
+                    # データがある日は popover（ボタン＋ポップアップ）で表示
+                    with st.popover(f"**{date_label}**"):
+                        st.subheader(f"【{date_label}】のアレルゲン")
+                        grouped = df_day_menu.groupby("アレルゲン")[
+                            "料理名"
+                        ].unique()
+                        for allergen_name, dishes in grouped.items():
+                            st.markdown(f"**📌 {allergen_name}**")
+                            for dish in dishes:
+                                st.write(f"└ {dish}")
+                else:
+                    # 給食がない日（土日など）はグレーアウト風の無効ボタン
+                    st.button(f"{day}", key=f"disabled_day_{day}", disabled=True)
+
+        conn.close()
 st.write("---")
 st.write("製作者：木村 陸")
 st.write(
