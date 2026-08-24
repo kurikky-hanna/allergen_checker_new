@@ -1,4 +1,5 @@
 import hashlib
+import calendar
 import os
 import re
 import sqlite3
@@ -87,37 +88,29 @@ correct_columns = [
     "ゼラチン",
 ]
 
-allergen_headers = correct_columns[2:]  # アレルゲン項目28種
+allergen_headers = correct_columns[2:]
 
 
-# ===== table_13 を作る処理 =====
+# ===== table_13 作成 =====
 def save_table13(all_dfs):
     try:
-        dfs_filtered = []
-        for d in all_dfs:
-            if len(d.columns) == len(correct_columns):
-                d.columns = correct_columns
-                dfs_filtered.append(d)
+        dfs_filtered = [d for d in all_dfs if len(d.columns) == len(correct_columns)]
+        for d in dfs_filtered:
+            d.columns = correct_columns
 
         if not dfs_filtered:
-            print("❌ 列数が一致するテーブルがありません")
             return False
 
         df = pd.concat(dfs_filtered, ignore_index=True)
-
         conn = sqlite3.connect(DB_PATH)
         df.to_sql("table_13", conn, if_exists="replace", index=False)
         conn.close()
-
-        print("✅ table_13 作成完了")
         return True
-
-    except Exception as e:
-        print(f"❌ table_13 作成エラー: {e}")
+    except Exception:
         return False
 
 
-# ===== PDF解析ロジック =====
+# ===== PDF解析 =====
 def build_date_dish_map(pdf_path, all_dfs):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -136,11 +129,7 @@ def build_date_dish_map(pdf_path, all_dfs):
                 else:
                     reiwa_match = re.search(r"令和\s*(\d+|元)\s*年", text)
                     if reiwa_match:
-                        r_num = (
-                            1
-                            if reiwa_match.group(1) == "元"
-                            else int(reiwa_match.group(1))
-                        )
+                        r_num = 1 if reiwa_match.group(1) == "元" else int(reiwa_match.group(1))
                         year = 2018 + r_num
 
                 date_match = re.search(r"(\d+)月(\d+)日", text)
@@ -161,7 +150,6 @@ def build_date_dish_map(pdf_path, all_dfs):
                     continue
 
                 df_page = all_dfs[page_num]
-
                 if df_page.shape[1] != len(correct_columns):
                     continue
 
@@ -173,12 +161,7 @@ def build_date_dish_map(pdf_path, all_dfs):
                         continue
 
                     dish_str = str(dish).strip().replace("\n", "")
-
-                    if (
-                        "料理名" in dish_str
-                        or "食品名" in dish_str
-                        or "品名" in dish_str
-                    ):
+                    if any(k in dish_str for k in ["料理名", "食品名", "品名"]):
                         continue
 
                     dish_str = re.sub(r"【\s*特例\s*[:：][^】]*】", "", dish_str)
@@ -190,68 +173,45 @@ def build_date_dish_map(pdf_path, all_dfs):
 
                     amount = row["分類"]
                     if not pd.isna(amount):
-                        amount_str = str(amount).strip()
                         try:
-                            float(amount_str)
+                            float(str(amount).strip())
                             continue
                         except ValueError:
                             pass
 
                     for allergen in allergen_headers:
-                        cell = (
-                            str(row.get(allergen, ""))
-                            .strip()
-                            .replace("\n", "")
-                        )
-                        if any(
-                            mark in cell for mark in ["○", "▲", "☒", "O", "0"]
-                        ):
+                        cell = str(row.get(allergen, "")).strip().replace("\n", "")
+                        if any(mark in cell for mark in ["○", "▲", "☒", "O", "0"]):
                             cur.execute(
                                 "INSERT INTO menu_allergens (date, dish, allergen) VALUES (?, ?, ?)",
                                 (date_str, dish_str, allergen),
                             )
-
     except Exception as e:
-        print(f"❌ build_date_dish_map エラー: {e}")
-
+        print(f"❌ エラー: {e}")
     finally:
         conn.commit()
         conn.close()
 
 
-# ===== アレルゲン一覧登録 =====
 def insert_allergens_from_table1():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     for allergen in allergen_headers:
         try:
             cur.execute(
-                f"SELECT COUNT(*) FROM table_13 "
-                f"WHERE `{allergen}` LIKE '%○%' OR `{allergen}` LIKE '%▲%'"
+                f"SELECT COUNT(*) FROM table_13 WHERE `{allergen}` LIKE '%○%' OR `{allergen}` LIKE '%▲%'"
             )
-            count = cur.fetchone()[0]
-            if count > 0:
-                cur.execute(
-                    "SELECT COUNT(*) FROM allergen WHERE name=? AND lang='ja'",
-                    (allergen,),
-                )
-                exists = cur.fetchone()[0]
-                if not exists:
-                    cur.execute(
-                        "INSERT INTO allergen (name, lang, details) VALUES (?, 'ja', '')",
-                        (allergen,),
-                    )
-                    cur.execute(
-                        "INSERT INTO allergen (name, lang, details) VALUES (?, 'en', '')",
-                        (allergen,),
-                    )
+            if cur.fetchone()[0] > 0:
+                cur.execute("SELECT COUNT(*) FROM allergen WHERE name=? AND lang='ja'", (allergen,))
+                if not cur.fetchone()[0]:
+                    cur.execute("INSERT INTO allergen (name, lang, details) VALUES (?, 'ja', '')", (allergen,))
+                    cur.execute("INSERT INTO allergen (name, lang, details) VALUES (?, 'en', '')", (allergen,))
         except Exception as e:
-            print(f"⚠️ {allergen} の処理中にエラー: {e}")
+            print(f"⚠️ エラー: {e}")
     conn.commit()
     conn.close()
 
 
-# ===== Streamlit メイン処理 =====
 def process_pdf(pdf_path):
     init_db()
     clear_db()
@@ -263,25 +223,20 @@ def process_pdf(pdf_path):
                 tables = page.extract_tables()
                 for table in tables:
                     if table:
-                        df = pd.DataFrame(table)
-                        all_dfs.append(df)
+                        all_dfs.append(pd.DataFrame(table))
     except Exception as e:
-        print(f"❌ pdfplumber 抽出エラー: {e}")
+        print(f"❌ エラー: {e}")
         return
 
     if not save_table13(all_dfs):
-        print("❌ table_13 の作成に失敗しました")
         return
 
     insert_allergens_from_table1()
     build_date_dish_map(pdf_path, all_dfs)
-    print("🎉 PDF 処理完了！")
 
 
-# ===== 画面設定 =====
-st.set_page_config(
-    page_title="給食アレルゲン調査機", page_icon="🍔", layout="centered"
-)
+# ===== Streamlit UI =====
+st.set_page_config(page_title="給食アレルゲン調査機", page_icon="🍔", layout="centered")
 
 st.title("給食アレルゲン調査機（Streamlit版）")
 uploaded = st.file_uploader("PDFを選んでください", type=["pdf"])
@@ -290,10 +245,7 @@ if uploaded:
     file_bytes = uploaded.getbuffer()
     file_hash = hashlib.md5(file_bytes).hexdigest()
 
-    if (
-        "processed_hash" not in st.session_state
-        or st.session_state["processed_hash"] != file_hash
-    ):
+    if "processed_hash" not in st.session_state or st.session_state["processed_hash"] != file_hash:
         temp_pdf_path = get_writable_path("temp_uploaded.pdf")
         with open(temp_pdf_path, "wb") as f:
             f.write(file_bytes)
@@ -303,38 +255,24 @@ if uploaded:
 
         st.session_state["processed_hash"] = file_hash
 
-    # DBデータ取得
     conn = sqlite3.connect(DB_PATH)
-    df_dates = pd.read_sql(
-        "SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn
-    )
-    df_allergen = pd.read_sql(
-        "SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn
-    )
+    df_dates = pd.read_sql("SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn)
+    df_allergen = pd.read_sql("SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn)
 
     detected_month = 7
     if not df_dates.empty:
-        first_date_str = df_dates["date"].iloc[0]
-        month_match = re.search(r"(\d+)/", first_date_str)
+        month_match = re.search(r"(\d+)/", df_dates["date"].iloc[0])
         if month_match:
             detected_month = int(month_match.group(1))
 
-    # 💡 【機能追加】警戒したいアレルゲンの選択ボックスを上部に設置！
     st.write("---")
     selected_allergens = st.multiselect(
-        "⚠️ カレンダーでハイライト（赤く表示）したいアレルゲンを選択してください",
+        "⚠️ カレンダーで警戒したいアレルゲンを選択してください（ボタンの色が変わります）",
         df_allergen["name"].tolist(),
         placeholder="アレルゲンを選択...",
     )
 
-    import calendar
-
-    year = datetime.now().year
-    month = detected_month
-
-    st.subheader(f"📅 {year}年 {month}月 カレンダー")
-
-    # 該当アレルゲンが含まれる日付リストを事前に取得
+    # 選択アレルゲンが含まれる日付のリストを取得
     danger_dates = []
     if selected_allergens:
         placeholders = ",".join(["?"] * len(selected_allergens))
@@ -342,121 +280,98 @@ if uploaded:
         df_danger = pd.read_sql(query, conn, params=selected_allergens)
         danger_dates = df_danger["date"].tolist()
 
-    # カレンダーのHTML生成
+    year = datetime.now().year
+    month = detected_month
+
+    st.subheader(f"📅 {year}年 {month}月 カレンダー")
+
+    # 曜日ヘッダー
     week_days = ["月", "火", "水", "木", "金", "土", "日"]
+    header_cols = st.columns(7)
+    for idx, day_name in enumerate(week_days):
+        header_cols[idx].markdown(
+            f"<div style='text-align: center; font-weight: bold;'>{day_name}</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.write("---")
+
     cal = calendar.monthcalendar(year, month)
 
-    calendar_html = """
-    <style>
-    .calendar-grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 6px;
-        width: 100%;
-        margin-bottom: 15px;
-    }
-    .calendar-header {
-        text-align: center;
-        font-weight: bold;
-        padding: 6px 0;
-    }
-    .calendar-day {
-        text-align: center;
-        padding: 10px 2px;
-        border-radius: 8px;
-        background-color: #f8f9fa;
-        font-size: 14px;
-        color: #333;
-    }
-    .calendar-day-safe {
-        background-color: #e2f0d9;
-        font-weight: bold;
-    }
-    .calendar-day-danger {
-        background-color: #f8d7da;
-        color: #721c24;
-        font-weight: bold;
-        border: 2px solid #f5c6cb;
-    }
-    .calendar-empty {
-        padding: 10px 2px;
-    }
-    </style>
-    """
-
-    calendar_html += '<div class="calendar-grid">'
-
-    for day_name in week_days:
-        calendar_html += f'<div class="calendar-header">{day_name}</div>'
+    # 💡 Popoverのボタン背景色をCSSで装飾・制御
+    st.markdown(
+        """
+        <style>
+        /* 緑色ボタン（給食あり・安全） */
+        div[data-testid="stPopover"] > button.safe-btn {
+            background-color: #d4edda !important;
+            color: #155724 !important;
+            border: 1px solid #c3e6cb !important;
+            font-weight: bold !important;
+        }
+        /* 赤色ボタン（アレルゲン検出・危険） */
+        div[data-testid="stPopover"] > button.danger-btn {
+            background-color: #f8d7da !important;
+            color: #721c24 !important;
+            border: 2px solid #f5c6cb !important;
+            font-weight: bold !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     for week in cal:
-        for day in week:
+        cols = st.columns(7)
+        for idx, day in enumerate(week):
             if day == 0:
-                calendar_html += '<div class="calendar-empty"></div>'
+                cols[idx].empty()
             else:
                 search_pattern = f"{month}/{day}(%"
-
-                # その日に給食があるかチェック
-                df_check = pd.read_sql(
-                    "SELECT date FROM menu_allergens WHERE date LIKE ?",
+                df_day_menu = pd.read_sql(
+                    "SELECT dish AS 料理名, allergen AS アレルゲン, date FROM menu_allergens WHERE date LIKE ?",
                     conn,
                     params=[search_pattern],
                 )
 
-                if not df_check.empty:
-                    current_date_str = df_check["date"].iloc[0]
-                    # 選択したアレルゲンが含まれている日か判別
-                    if current_date_str in danger_dates:
-                        calendar_html += f'<div class="calendar-day calendar-day-danger">⚠️ {day}</div>'
+                with cols[idx]:
+                    if not df_day_menu.empty:
+                        date_label = df_day_menu["date"].iloc[0]
+                        is_danger = date_label in danger_dates
+
+                        # ボタンのラベル（危険時は ⚠️ を付与）
+                        btn_label = f"⚠️ {day}" if is_danger else f"{day}"
+
+                        # popover本体
+                        with st.popover(btn_label, use_container_width=True):
+                            st.subheader(f"【{date_label}】のアレルゲン")
+                            grouped = df_day_menu.groupby("アレルゲン")["料理名"].unique()
+
+                            for allergen_name, dishes in grouped.items():
+                                if allergen_name in selected_allergens:
+                                    st.markdown(
+                                        f"<p style='color:red; font-weight:bold; margin-bottom:0;'>🚨 📌 {allergen_name}（対象アレルゲン）</p>",
+                                        unsafe_allow_html=True,
+                                    )
+                                else:
+                                    st.markdown(f"**📌 {allergen_name}**")
+
+                                for dish in dishes:
+                                    st.write(f"└ {dish}")
+
                     else:
-                        calendar_html += f'<div class="calendar-day calendar-day-safe">{day}</div>'
-                else:
-                    calendar_html += f'<div class="calendar-day">{day}</div>'
-
-    calendar_html += "</div>"
-    st.markdown(calendar_html, unsafe_allow_html=True)
-
-    # 凡例表示
-    col1, col2 = st.columns(2)
-    col1.markdown("🟩 **緑色**：給食あり（安全）")
-    col2.markdown("🟥 **赤色（⚠️）**：選択したアレルゲンが含まれる日")
-
-    st.write("---")
-
-    # 日付選択セレクトボックス
-    available_dates = df_dates["date"].tolist()
-    selected_date = st.selectbox(
-        "🔍 詳細を確認したい日付を選んでください", available_dates
-    )
-
-    if selected_date:
-        df_day_menu = pd.read_sql(
-            """
-            SELECT dish AS 料理名, allergen AS アレルゲン 
-            FROM menu_allergens 
-            WHERE date = ?
-            """,
-            conn,
-            params=[selected_date],
-        )
-
-        st.subheader(f"【{selected_date}】のアレルゲン一覧")
-        grouped = df_day_menu.groupby("アレルゲン")["料理名"].unique()
-
-        for allergen_name, dishes in grouped.items():
-            # 選択中のアレルゲンは強調表示
-            if allergen_name in selected_allergens:
-                st.markdown(
-                    f"<h4 style='color: red;'>🚨 📌 {allergen_name}（選択中のアレルゲン）</h4>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(f"**📌 {allergen_name}**")
-
-            for dish in dishes:
-                st.write(f"└ {dish}")
+                        st.button(
+                            f"{day}",
+                            key=f"disabled_day_{month}_{day}",
+                            disabled=True,
+                            use_container_width=True,
+                        )
 
     conn.close()
+
+    st.write("---")
+    st.markdown("🟩 **数字のみ**：給食あり（安全）")
+    st.markdown("🟥 **⚠️マーク付き**：選択したアレルゲンが含まれる日")
 
 st.write("---")
 st.write("製作者：木村 陸")
