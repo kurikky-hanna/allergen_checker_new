@@ -295,132 +295,208 @@ if uploaded:
         if month_match:
             detected_month = int(month_match.group(1))
 
-    st.write("---")
-    selected_allergens = st.multiselect(
-        "⚠️ カレンダーで警戒したいアレルゲンを選択してください（ボタンの色が変わります）",
-        df_allergen["name"].tolist(),
-        placeholder="アレルゲンを選択...",
-    )
-
-    danger_dates = []
-    if selected_allergens:
-        placeholders = ",".join(["?"] * len(selected_allergens))
-        query = f"SELECT DISTINCT date FROM menu_allergens WHERE allergen IN ({placeholders})"
-        df_danger = pd.read_sql(query, conn, params=selected_allergens)
-        danger_dates = df_danger["date"].tolist()
-
-    year = datetime.now().year
-    month = detected_month
-
-    st.subheader(f"📅 {year}年 {month}月 カレンダー")
-
-    # 選択した日付の状態保持
-    if "selected_day" not in st.session_state:
-        st.session_state["selected_day"] = None
-
-    # CSSでボタンの装飾
+    # 📱 スマホでも7列固定にするためのCSS
     st.markdown(
         """
         <style>
-        /* ボタン内のマージン調整 */
+        div[data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            gap: 2px !important;
+        }
+        div[data-testid="column"] {
+            width: 14.28% !important;
+            min-width: 0 !important;
+            flex: 1 1 0 !important;
+            padding: 0 !important;
+        }
         div[data-testid="column"] button {
-            width: 100%;
-            height: 50px;
-            font-size: 16px !important;
+            width: 100% !important;
+            height: 44px !important;
+            padding: 0 !important;
+            font-size: 13px !important;
             font-weight: bold !important;
-            border-radius: 8px !important;
+            border-radius: 6px !important;
+        }
+        @media (max-width: 600px) {
+            div[data-testid="column"] button {
+                height: 38px !important;
+                font-size: 11px !important;
+            }
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    week_days = ["月", "火", "水", "木", "金", "土", "日"]
-    header_cols = st.columns(7)
-    for idx, day_name in enumerate(week_days):
-        header_cols[idx].markdown(
-            f"<div style='text-align: center; font-weight: bold;'>{day_name}</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.write("---")
-
-    cal = calendar.monthcalendar(year, month)
-
-    for week in cal:
-        cols = st.columns(7)
-        for idx, day in enumerate(week):
-            if day == 0:
-                cols[idx].empty()
-            else:
-                search_pattern = f"{month}/{day}(%"
-                df_day_menu = pd.read_sql(
-                    "SELECT date FROM menu_allergens WHERE date LIKE ?",
-                    conn,
-                    params=[search_pattern],
-                )
-
-                with cols[idx]:
-                    if not df_day_menu.empty:
-                        date_label = df_day_menu["date"].iloc[0]
-                        is_danger = date_label in danger_dates
-
-                        # アレルゲン有無でボタンタイプを変更
-                        btn_label = f"⚠️{day}" if is_danger else f"{day}"
-                        btn_type = "primary" if is_danger else "secondary"
-
-                        if st.button(
-                            btn_label,
-                            key=f"day_btn_{month}_{day}",
-                            type=btn_type,
-                            use_container_width=True,
-                        ):
-                            st.session_state["selected_day"] = day
-                    else:
-                        st.button(
-                            f"{day}",
-                            key=f"disabled_day_{month}_{day}",
-                            disabled=True,
-                            use_container_width=True,
-                        )
+    # ===== タブ設定 =====
+    tab1, tab2 = st.tabs(["🔍 アレルゲン・料理名検索", "📅 カレンダー表示"])
 
     # -----------------------------
-    # 選択された日の詳細を下に表示
+    # Tab 1: アレルゲン・料理名検索
     # -----------------------------
-    selected_day = st.session_state["selected_day"]
+    with tab1:
+        st.subheader("🔍 条件から探す")
 
-    if selected_day is not None:
-        search_pattern = f"{month}/{selected_day}(%"
-        df_selected_day = pd.read_sql(
-            "SELECT dish AS 料理名, allergen AS アレルゲン, date FROM menu_allergens WHERE date LIKE ?",
-            conn,
-            params=[search_pattern],
+        search_type = st.radio(
+            "検索方法を選択:",
+            ["アレルゲンから探す", "料理名から探す"],
+            horizontal=True,
         )
 
-        if not df_selected_day.empty:
-            date_label = df_selected_day["date"].iloc[0]
-            st.write("---")
-            st.subheader(f"📅 【{date_label}】のアレルゲン一覧")
+        if search_type == "アレルゲンから探す":
+            target_allergens = st.multiselect(
+                "調べたいアレルゲンを選択してください",
+                df_allergen["name"].tolist(),
+            )
+            if target_allergens:
+                placeholders = ",".join(["?"] * len(target_allergens))
+                query = f"""
+                    SELECT date AS 日付, dish AS 料理名, allergen AS アレルゲン
+                    FROM menu_allergens
+                    WHERE allergen IN ({placeholders})
+                    ORDER BY date
+                """
+                df_result = pd.read_sql(query, conn, params=target_allergens)
 
-            grouped = df_selected_day.groupby("アレルゲン")["料理名"].unique()
-
-            for allergen_name, dishes in grouped.items():
-                if allergen_name in selected_allergens:
-                    st.markdown(
-                        f"<p style='color:#d32f2f; font-weight:bold; font-size:18px; margin-bottom:4px;'>🚨 📌 {allergen_name}（選択中のアレルゲン）</p>",
-                        unsafe_allow_html=True,
-                    )
+                if not df_result.empty:
+                    st.success(f"{len(df_result)} 件見つかりました")
+                    st.dataframe(df_result, use_container_width=True)
                 else:
-                    st.markdown(f"**📌 {allergen_name}**")
+                    st.info("該当する給食は見つかりませんでした。")
 
-                for dish in dishes:
-                    st.write(f"└ {dish}")
+        else:  # 料理名から探す
+            keyword = st.text_input(
+                "料理名の一部を入力してください（例: カレー）"
+            )
+            if keyword:
+                query = """
+                    SELECT date AS 日付, dish AS 料理名, allergen AS アレルゲン
+                    FROM menu_allergens
+                    WHERE dish LIKE ?
+                    ORDER BY date
+                """
+                df_result = pd.read_sql(query, conn, params=[f"%{keyword}%"])
+
+                if not df_result.empty:
+                    st.success(f"{len(df_result)} 件見つかりました")
+                    st.dataframe(df_result, use_container_width=True)
+                else:
+                    st.info("該当する料理は見つかりませんでした。")
+
+    # -----------------------------
+    # Tab 2: カレンダー表示
+    # -----------------------------
+    with tab2:
+        selected_allergens = st.multiselect(
+            "⚠️ カレンダーで警戒したいアレルゲンを選択してください（ボタンが赤くなります）",
+            df_allergen["name"].tolist(),
+            placeholder="アレルゲンを選択...",
+        )
+
+        danger_dates = []
+        if selected_allergens:
+            placeholders = ",".join(["?"] * len(selected_allergens))
+            query = f"SELECT DISTINCT date FROM menu_allergens WHERE allergen IN ({placeholders})"
+            df_danger = pd.read_sql(query, conn, params=selected_allergens)
+            danger_dates = df_danger["date"].tolist()
+
+        year = datetime.now().year
+        month = detected_month
+
+        st.subheader(f"📅 {year}年 {month}月 カレンダー")
+
+        if "selected_day" not in st.session_state:
+            st.session_state["selected_day"] = None
+
+        week_days = ["月", "火", "水", "木", "金", "土", "日"]
+        header_cols = st.columns(7)
+        for idx, day_name in enumerate(week_days):
+            header_cols[idx].markdown(
+                f"<div style='text-align: center; font-weight: bold; font-size: 13px;'>{day_name}</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.write("---")
+
+        cal = calendar.monthcalendar(year, month)
+
+        for week in cal:
+            cols = st.columns(7)
+            for idx, day in enumerate(week):
+                if day == 0:
+                    cols[idx].empty()
+                else:
+                    search_pattern = f"{month}/{day}(%"
+                    df_day_menu = pd.read_sql(
+                        "SELECT date FROM menu_allergens WHERE date LIKE ?",
+                        conn,
+                        params=[search_pattern],
+                    )
+
+                    with cols[idx]:
+                        if not df_day_menu.empty:
+                            date_label = df_day_menu["date"].iloc[0]
+                            is_danger = date_label in danger_dates
+
+                            btn_label = f"⚠️{day}" if is_danger else f"{day}"
+                            btn_type = "primary" if is_danger else "secondary"
+
+                            if st.button(
+                                btn_label,
+                                key=f"day_btn_{month}_{day}",
+                                type=btn_type,
+                                use_container_width=True,
+                            ):
+                                st.session_state["selected_day"] = day
+                        else:
+                            st.button(
+                                f"{day}",
+                                key=f"disabled_day_{month}_{day}",
+                                disabled=True,
+                                use_container_width=True,
+                            )
+
+        # 選択された日の詳細表示
+        selected_day = st.session_state["selected_day"]
+
+        if selected_day is not None:
+            search_pattern = f"{month}/{selected_day}(%"
+            df_selected_day = pd.read_sql(
+                "SELECT dish AS 料理名, allergen AS アレルゲン, date FROM menu_allergens WHERE date LIKE ?",
+                conn,
+                params=[search_pattern],
+            )
+
+            if not df_selected_day.empty:
+                date_label = df_selected_day["date"].iloc[0]
+                st.write("---")
+                st.subheader(f"📅 【{date_label}】のアレルゲン一覧")
+
+                grouped = df_selected_day.groupby("アレルゲン")[
+                    "料理名"
+                ].unique()
+
+                for allergen_name, dishes in grouped.items():
+                    if allergen_name in selected_allergens:
+                        st.markdown(
+                            f"<p style='color:#d32f2f; font-weight:bold; font-size:16px; margin-bottom:4px;'>🚨 📌 {allergen_name}（選択中のアレルゲン）</p>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(f"**📌 {allergen_name}**")
+
+                    for dish in dishes:
+                        st.write(f"└ {dish}")
+
+        st.write("---")
+        st.markdown("⚪ **数字のみ**：給食あり（安全）")
+        st.markdown(
+            "🔴 **⚠️マーク（赤ボタン）**：選択したアレルゲンが含まれる日"
+        )
 
     conn.close()
-
-    st.write("---")
-    st.markdown("⚪ **通常ボタン**：給食あり（安全）")
-    st.markdown("🔴 **⚠️マーク（赤ボタン）**：選択したアレルゲンが含まれる日")
 
 st.write("---")
 st.write("製作者：木村 陸")
