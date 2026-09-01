@@ -261,49 +261,15 @@ st.set_page_config(
     page_title="給食アレルゲン調査機", page_icon="🍔", layout="centered"
 )
 
-# 📱 スマホ画面横幅の最小サイズ・高さを強制コントロールするCSS
-st.markdown(
-    """
-    <style>
-    /* カレンダー7列をどんな端末でも画面幅いっぱいに収める */
-    div[data-testid="stHorizontalBlock"] {
-        display: flex !important;
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-        gap: 2px !important;
-        margin-bottom: 3px !important;
-    }
-    div[data-testid="column"] {
-        width: 14.28% !important;
-        min-width: 0 !important;
-        flex: 1 1 0 !important;
-        padding: 0 !important;
-    }
-    /* popoverボタンの高さを統一しスマホ崩れを遮断 */
-    div[data-testid="column"] div[data-testid="stPopover"] {
-        width: 100% !important;
-    }
-    div[data-testid="column"] div[data-testid="stPopover"] > button,
-    div[data-testid="column"] > button {
-        width: 100% !important;
-        min-height: 38px !important;
-        height: 38px !important;
-        padding: 0 !important;
-        font-size: 11px !important;
-        font-weight: bold !important;
-        border-radius: 6px !important;
-        margin: 0 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.title("給食アレルゲン調査機🍔")
+uploaded = st.file_uploader(
+    "学校から配布された「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。",
+    type=["pdf"],
+)
+st.write(
+    "このアプリがPDFを読み取り、「いつ・どの料理に・どのアレルゲンが含まれているか」を調べられます。"
 )
 
-st.title("給食アレルゲン調査機🍔")
-uploaded = st.file_uploader("学校から配布された"
-    "「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。", type=["pdf"])
-st.write("このアプリがPDFを読み取り、"
-    "「いつ・どの料理に・どのアレルゲンが含まれているか」を調べられます。")
 if uploaded:
     file_bytes = uploaded.getbuffer()
     file_hash = hashlib.md5(file_bytes).hexdigest()
@@ -339,26 +305,21 @@ if uploaded:
     tab1, tab2 = st.tabs(["🔍 アレルゲンで検索", "📅 カレンダー表示"])
 
     # -----------------------------
-    # Tab 1: st.popover による日付別ポップアップ表示
+    # Tab 1: アレルゲン検索（ソート対応 & Popover表示）
     # -----------------------------
     with tab1:
         st.subheader("🔍 条件から探す")
 
-        search_type = st.radio(
-            "検索方法を選択:",
-            ["アレルゲンから探す", ],
-            horizontal=True,
-        )
-
         df_result = pd.DataFrame()
 
-        
         target_allergens = st.multiselect(
             "調べたいアレルゲンを選択してください",
             df_allergen["name"].tolist(),
         )
+
         if target_allergens:
             placeholders = ",".join(["?"] * len(target_allergens))
+            # 💡 月・日を数値キャストして日付順にソート
             query = f"""
                 SELECT date, dish, allergen
                 FROM menu_allergens
@@ -367,23 +328,19 @@ if uploaded:
                     CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
                     CAST(substr(date, instr(date, '/') + 1, instr(date, '(') - instr(date, '/') - 1) AS INTEGER)
             """
-            df_result = pd.read_sql(query, conn, params=target_allergens) 
-        # 💡 表ではなく st.popover のリストで表示
-        # 💡 アレルゲンをメインにした st.popover 表示
+            df_result = pd.read_sql(query, conn, params=target_allergens)
+
         if not df_result.empty:
-            # 検索結果に含まれるアレルゲンのリストを取得
             allergens = df_result["allergen"].unique()
             st.success(
                 f"{len(df_result)} 件見つかりました（該当アレルゲン: {len(allergens)} 種類）"
             )
 
             for allergen_val in allergens:
-                # 該当アレルゲンのデータのみ抽出
                 df_allergen_items = df_result[
                     df_result["allergen"] == allergen_val
                 ]
 
-                # アレルゲン名をボタンにした popover
                 with st.popover(
                     f"⚠️ {allergen_val}（{len(df_allergen_items)}件）",
                     use_container_width=True,
@@ -393,10 +350,11 @@ if uploaded:
                         unsafe_allow_html=True,
                     )
 
-                    # 日付ごとに料理をまとめる（SQLの並び順をキープ）
+                    # 💡 sort=False でSQLのソート順を保持[cite: 1]
                     grouped_by_date = df_allergen_items.groupby(
                         "date", sort=False
                     )["dish"].unique()
+
                     for date_val, dishes in grouped_by_date.items():
                         st.markdown(f"**📅 {date_val}**")
                         for dish in dishes:
@@ -406,10 +364,8 @@ if uploaded:
                             unsafe_allow_html=True,
                         )
 
-
-
     # -----------------------------
-    # Tab 2: st.popover カレンダー表示（月末31日まで完全対応）
+    # Tab 2: カレンダー表示（標準レイアウト）
     # -----------------------------
     with tab2:
         selected_allergens = st.multiselect(
@@ -439,13 +395,9 @@ if uploaded:
                 unsafe_allow_html=True,
             )
 
-        st.markdown(
-            "<div style='margin-bottom: 4px;'></div>", unsafe_allow_html=True
-        )
-
         cal = calendar.monthcalendar(year, month)
 
-        # 全日付を一括生成（これで30・31日も漏れなく表示）
+        # 標準のst.columnsで描画（スマホでタップしやすい押しボタンサイズ）
         for week in cal:
             cols = st.columns(7)
             for idx, day in enumerate(week):
@@ -471,7 +423,6 @@ if uploaded:
                             btn_label = f"⚠️{day}" if is_danger else f"{day}"
                             btn_type = "primary" if is_danger else "secondary"
 
-                            # 💡 タップで吹き出しが開く
                             with st.popover(
                                 btn_label,
                                 type=btn_type,
