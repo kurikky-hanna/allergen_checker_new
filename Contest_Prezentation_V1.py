@@ -70,7 +70,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT,
         dish TEXT,
-        allergen TEXT
+        allergen TEXT,
+        mark TEXT
     )
     """)
     conn.commit()
@@ -191,12 +192,18 @@ def build_date_dish_map(pdf_path, all_dfs):
                             .strip()
                             .replace("\n", "")
                         )
-                        if any(
-                            mark in cell for mark in ["○", "▲", "☒", "O", "0"]
-                        ):
+
+                        # 該当する記号を判定してマークを取得
+                        found_mark = None
+                        if any(m in cell for m in ["○", "O", "0"]):
+                            found_mark = "○"
+                        elif any(m in cell for m in ["▲", "☒"]):
+                            found_mark = "▲"
+
+                        if found_mark:
                             cur.execute(
-                                "INSERT INTO menu_allergens (date, dish, allergen) VALUES (?, ?, ?)",
-                                (date_str, dish_str, allergen),
+                                "INSERT INTO menu_allergens (date, dish, allergen, mark) VALUES (?, ?, ?, ?)",
+                                (date_str, dish_str, allergen, found_mark),
                             )
     except Exception as e:
         print(f"❌ エラー: {e}")
@@ -309,7 +316,7 @@ if uploaded:
         if month_match:
             detected_month = int(month_match.group(1))
 
-    # 💡 【改善案1】今月のアレルゲン安全診断ステータス表示
+    # 今月のアレルゲン安全診断ステータス表示
     with st.expander(
         f"📋 今月（{detected_month}月）のアレルゲン使用状況のチェック結果を見る",
         expanded=False,
@@ -337,19 +344,17 @@ if uploaded:
     tab1, tab2 = st.tabs(["🔍 アレルゲンで検索", "📅 カレンダー表示"])
 
     # -----------------------------
-    # Tab 1: アレルゲン検索（全28項目選択可能）
+    # Tab 1: アレルゲン検索
     # -----------------------------
     with tab1:
         st.subheader("🔍 条件から探す")
 
-        # 💡 【改善案2】プルダウンの選択肢を28項目すべてにする
         target_allergens = st.multiselect(
             "調べたいアレルゲンを選択してください（全28項目から選択可能）",
             ALL_28_ALLERGENS,
         )
 
         if target_allergens:
-            # 選択されたアレルゲンを「検出あり」と「使用なし（安全）」に振り分ける
             selected_detected = [
                 a for a in target_allergens if a in detected_allergens
             ]
@@ -357,18 +362,17 @@ if uploaded:
                 a for a in target_allergens if a in unused_allergens
             ]
 
-            # 🟢 今月使われていないアレルゲンが選ばれた場合の安心メッセージ
             if selected_unused:
                 unused_str = "・".join(selected_unused)
                 st.success(
                     f"🟢 **【安心】{unused_str}** は、今月の給食献立には一切含まれていません。"
                 )
 
-            # 🔴 検出されたアレルゲンの検索結果を表示
             if selected_detected:
                 placeholders = ",".join(["?"] * len(selected_detected))
+                # 💡 mark列もSQLで取得[cite: 1]
                 query = f"""
-                    SELECT date, dish, allergen
+                    SELECT date, dish, allergen, mark
                     FROM menu_allergens
                     WHERE allergen IN ({placeholders})
                     ORDER BY 
@@ -393,24 +397,29 @@ if uploaded:
                                 unsafe_allow_html=True,
                             )
 
+                            # 💡 markごとにグループ化して表示[cite: 1]
                             grouped_by_date = df_allergen_items.groupby(
                                 "date", sort=False
-                            )["dish"].unique()
+                            )
 
-                            for date_val, dishes in grouped_by_date.items():
+                            for date_val, group in grouped_by_date:
                                 st.markdown(f"**📅 {date_val}**")
-                                for dish in dishes:
-                                    st.write(f"└ {dish}")
+                                for _, row in group.iterrows():
+                                    mark_str = (
+                                        f" [{row['mark']}]"
+                                        if row["mark"]
+                                        else ""
+                                    )
+                                    st.write(f"└ {row['dish']}{mark_str}")
                                 st.markdown(
                                     "<div style='margin-bottom: 8px;'></div>",
                                     unsafe_allow_html=True,
                                 )
 
     # -----------------------------
-    # Tab 2: カレンダー表示（全28項目選択可能）
+    # Tab 2: カレンダー表示
     # -----------------------------
     with tab2:
-        # 💡 こちらのプルダウンも全28項目から選択可能に変更
         selected_allergens = st.multiselect(
             "⚠️ 警戒するアレルゲンを選択（全28項目から選択可能）",
             ALL_28_ALLERGENS,
@@ -419,7 +428,6 @@ if uploaded:
 
         danger_dates = []
         if selected_allergens:
-            # 今月使われていないアレルゲンが選択された場合メッセージを表示
             selected_unused = [
                 a for a in selected_allergens if a in unused_allergens
             ]
@@ -457,7 +465,7 @@ if uploaded:
                     search_pattern = f"{month}/{day}(%"
                     df_day_menu = pd.read_sql(
                         """
-                        SELECT dish AS 料理名, allergen AS アレルゲン, date
+                        SELECT dish AS 料理名, allergen AS アレルゲン, mark AS マーク, date
                         FROM menu_allergens
                         WHERE date LIKE ?
                         """,
@@ -480,20 +488,29 @@ if uploaded:
                             ):
                                 st.markdown(f"### 📅 【{date_label}】")
 
-                                grouped = df_day_menu.groupby("アレルゲン")[
-                                    "料理名"
-                                ].unique()
+                                # アレルゲンとマークでグループ化
+                                grouped = df_day_menu.groupby(
+                                    ["アレルゲン", "マーク"]
+                                )
 
-                                for allergen_name, dishes in grouped.items():
+                                for (
+                                    allergen_name,
+                                    mark_val,
+                                ), group in grouped:
+                                    mark_str = (
+                                        f"（{mark_val}）" if mark_val else ""
+                                    )
                                     if allergen_name in selected_allergens:
                                         st.markdown(
-                                            f"<p style='color:#d32f2f; font-weight:bold; font-size:15px; margin-bottom:2px;'>🚨 📌 {allergen_name}</p>",
+                                            f"<p style='color:#d32f2f; font-weight:bold; font-size:15px; margin-bottom:2px;'>🚨 📌 {allergen_name}{mark_str}</p>",
                                             unsafe_allow_html=True,
                                         )
                                     else:
-                                        st.markdown(f"**📌 {allergen_name}**")
+                                        st.markdown(
+                                            f"**📌 {allergen_name}{mark_str}**"
+                                        )
 
-                                    for dish in dishes:
+                                    for dish in group["料理名"].unique():
                                         st.write(f"└ {dish}")
                         else:
                             st.button(
@@ -507,6 +524,9 @@ if uploaded:
         st.markdown("⚪ **数字のみ**：給食あり（安全）")
         st.markdown(
             "🔴 **⚠️マーク（赤ボタン）**：選択したアレルゲンが含まれる日"
+        )
+        st.markdown(
+            "※ **（○）**：原材料に使用 / **（▲）**：コンタミネーション等の可能性"
         )
 
     conn.close()
