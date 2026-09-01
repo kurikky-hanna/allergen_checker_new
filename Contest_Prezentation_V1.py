@@ -363,11 +363,11 @@ if uploaded:
                 SELECT date, dish, allergen
                 FROM menu_allergens
                 WHERE allergen IN ({placeholders})
-                ORDER BY date
+                ORDER BY 
+                    CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
+                    CAST(substr(date, instr(date, '/') + 1, instr(date, '(') - instr(date, '/') - 1) AS INTEGER)
             """
-            df_result = pd.read_sql(query, conn, params=target_allergens)
-
-        
+            df_result = pd.read_sql(query, conn, params=target_allergens) 
         # 💡 表ではなく st.popover のリストで表示
         # 💡 アレルゲンをメインにした st.popover 表示
         if not df_result.empty:
@@ -393,11 +393,10 @@ if uploaded:
                         unsafe_allow_html=True,
                     )
 
-                    # 日付ごとに料理をまとめる
-                    grouped_by_date = df_allergen_items.groupby("date")[
-                        "dish"
-                    ].unique()
-
+                    # 日付ごとに料理をまとめる（SQLの並び順をキープ）
+                    grouped_by_date = df_allergen_items.groupby(
+                        "date", sort=False
+                    )["dish"].unique()
                     for date_val, dishes in grouped_by_date.items():
                         st.markdown(f"**📅 {date_val}**")
                         for dish in dishes:
