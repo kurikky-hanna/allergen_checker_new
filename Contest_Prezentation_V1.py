@@ -20,6 +20,38 @@ def get_writable_path(filename):
 
 DB_PATH = get_writable_path("menu_data_V1.db")
 
+# 🟢 アレルギー表示対象（特定原材料8品目＋特定原材料に準ずるもの20品目＝計28品目）
+ALL_28_ALLERGENS = [
+    "卵",
+    "乳",
+    "小麦",
+    "そば",
+    "落花生",
+    "えび",
+    "かに",
+    "くるみ",
+    "アーモンド",
+    "あわび",
+    "いか",
+    "いくら",
+    "オレンジ",
+    "カシューナッツ",
+    "キウイ",
+    "牛肉",
+    "ごま",
+    "さけ",
+    "さば",
+    "大豆",
+    "鶏肉",
+    "バナナ",
+    "豚肉",
+    "マカダミアナッツ",
+    "もも",
+    "やまいも",
+    "りんご",
+    "ゼラチン",
+]
+
 
 # ===== DB 初期化 =====
 def init_db():
@@ -55,40 +87,8 @@ def clear_db():
 
 
 # ===== アレルゲン列 =====
-correct_columns = [
-    "料理名/食品名",
-    "分類",
-    "卵",
-    "乳",
-    "小麦",
-    "そば",
-    "落花生",
-    "えび",
-    "かに",
-    "くるみ",
-    "アーモンド",
-    "あわび",
-    "いか",
-    "いくら",
-    "オレンジ",
-    "カシューナッツ",
-    "キウイ",
-    "牛肉",
-    "ごま",
-    "さけ",
-    "さば",
-    "大豆",
-    "鶏肉",
-    "バナナ",
-    "豚肉",
-    "マカダミアナッツ",
-    "もも",
-    "やまいも",
-    "りんご",
-    "ゼラチン",
-]
-
-allergen_headers = correct_columns[2:]
+correct_columns = ["料理名/食品名", "分類"] + ALL_28_ALLERGENS
+allergen_headers = ALL_28_ALLERGENS
 
 
 # ===== table_13 作成 =====
@@ -291,9 +291,17 @@ if uploaded:
     df_dates = pd.read_sql(
         "SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn
     )
+
+    # DB内に実際に存在する（検出された）アレルゲンリスト
     df_allergen = pd.read_sql(
         "SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn
     )
+    detected_allergens = df_allergen["name"].tolist()
+
+    # 🟢 検出されなかった（＝今月の給食には入っていない）アレルゲンリスト
+    unused_allergens = [
+        item for item in ALL_28_ALLERGENS if item not in detected_allergens
+    ]
 
     detected_month = 7
     if not df_dates.empty:
@@ -301,81 +309,125 @@ if uploaded:
         if month_match:
             detected_month = int(month_match.group(1))
 
+    # 💡 【改善案1】今月のアレルゲン安全診断ステータス表示
+    with st.expander(
+        f"📋 今月（{detected_month}月）のアレルゲン使用状況のチェック結果を見る",
+        expanded=False,
+    ):
+        st.markdown(
+            f"**🔴 今月の給食で検出されたアレルゲン（{len(detected_allergens)}項目）**"
+        )
+        st.info(
+            "、".join(detected_allergens)
+            if detected_allergens
+            else "検出なし"
+        )
+
+        st.markdown(
+            f"**🟢 今月は使用されていない安全なアレルゲン（{len(unused_allergens)}項目）**"
+        )
+        st.caption(
+            "※以下の食品は今月の給食メニュー・原材料表に記載がありませんでした。"
+        )
+        st.success(
+            "、".join(unused_allergens) if unused_allergens else "なし"
+        )
+
     # ===== タブ設定 =====
     tab1, tab2 = st.tabs(["🔍 アレルゲンで検索", "📅 カレンダー表示"])
 
     # -----------------------------
-    # Tab 1: アレルゲン検索（ソート対応 & Popover表示）
+    # Tab 1: アレルゲン検索（全28項目選択可能）
     # -----------------------------
     with tab1:
         st.subheader("🔍 条件から探す")
 
-        df_result = pd.DataFrame()
-
+        # 💡 【改善案2】プルダウンの選択肢を28項目すべてにする
         target_allergens = st.multiselect(
-            "調べたいアレルゲンを選択してください",
-            df_allergen["name"].tolist(),
+            "調べたいアレルゲンを選択してください（全28項目から選択可能）",
+            ALL_28_ALLERGENS,
         )
 
         if target_allergens:
-            placeholders = ",".join(["?"] * len(target_allergens))
-            # 💡 月・日を数値キャストして日付順にソート
-            query = f"""
-                SELECT date, dish, allergen
-                FROM menu_allergens
-                WHERE allergen IN ({placeholders})
-                ORDER BY 
-                    CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
-                    CAST(substr(date, instr(date, '/') + 1, instr(date, '(') - instr(date, '/') - 1) AS INTEGER)
-            """
-            df_result = pd.read_sql(query, conn, params=target_allergens)
+            # 選択されたアレルゲンを「検出あり」と「使用なし（安全）」に振り分ける
+            selected_detected = [
+                a for a in target_allergens if a in detected_allergens
+            ]
+            selected_unused = [
+                a for a in target_allergens if a in unused_allergens
+            ]
 
-        if not df_result.empty:
-            allergens = df_result["allergen"].unique()
-            st.success(
-                f"{len(df_result)} 件見つかりました（該当アレルゲン: {len(allergens)} 種類）"
-            )
+            # 🟢 今月使われていないアレルゲンが選ばれた場合の安心メッセージ
+            if selected_unused:
+                unused_str = "・".join(selected_unused)
+                st.success(
+                    f"🟢 **【安心】{unused_str}** は、今月の給食献立には一切含まれていません。"
+                )
 
-            for allergen_val in allergens:
-                df_allergen_items = df_result[
-                    df_result["allergen"] == allergen_val
-                ]
+            # 🔴 検出されたアレルゲンの検索結果を表示
+            if selected_detected:
+                placeholders = ",".join(["?"] * len(selected_detected))
+                query = f"""
+                    SELECT date, dish, allergen
+                    FROM menu_allergens
+                    WHERE allergen IN ({placeholders})
+                    ORDER BY 
+                        CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
+                        CAST(substr(date, instr(date, '/') + 1, instr(date, '(') - instr(date, '/') - 1) AS INTEGER)
+                """
+                df_result = pd.read_sql(query, conn, params=selected_detected)
 
-                with st.popover(
-                    f"⚠️ {allergen_val}（{len(df_allergen_items)}件）",
-                    use_container_width=True,
-                ):
-                    st.markdown(
-                        f"<h3 style='color:#d32f2f;'>🚨 【{allergen_val}】が含まれる給食一覧</h3>",
-                        unsafe_allow_html=True,
-                    )
+                if not df_result.empty:
+                    allergens_in_res = df_result["allergen"].unique()
+                    for allergen_val in allergens_in_res:
+                        df_allergen_items = df_result[
+                            df_result["allergen"] == allergen_val
+                        ]
 
-                    # 💡 sort=False でSQLのソート順を保持[cite: 1]
-                    grouped_by_date = df_allergen_items.groupby(
-                        "date", sort=False
-                    )["dish"].unique()
+                        with st.popover(
+                            f"⚠️ {allergen_val}（{len(df_allergen_items)}件）",
+                            use_container_width=True,
+                        ):
+                            st.markdown(
+                                f"<h3 style='color:#d32f2f;'>🚨 【{allergen_val}】が含まれる給食一覧</h3>",
+                                unsafe_allow_html=True,
+                            )
 
-                    for date_val, dishes in grouped_by_date.items():
-                        st.markdown(f"**📅 {date_val}**")
-                        for dish in dishes:
-                            st.write(f"└ {dish}")
-                        st.markdown(
-                            "<div style='margin-bottom: 8px;'></div>",
-                            unsafe_allow_html=True,
-                        )
+                            grouped_by_date = df_allergen_items.groupby(
+                                "date", sort=False
+                            )["dish"].unique()
+
+                            for date_val, dishes in grouped_by_date.items():
+                                st.markdown(f"**📅 {date_val}**")
+                                for dish in dishes:
+                                    st.write(f"└ {dish}")
+                                st.markdown(
+                                    "<div style='margin-bottom: 8px;'></div>",
+                                    unsafe_allow_html=True,
+                                )
 
     # -----------------------------
-    # Tab 2: カレンダー表示（標準レイアウト）
+    # Tab 2: カレンダー表示（全28項目選択可能）
     # -----------------------------
     with tab2:
+        # 💡 こちらのプルダウンも全28項目から選択可能に変更
         selected_allergens = st.multiselect(
-            "⚠️ 警戒するアレルゲンを選択（ボタンが赤くなります）",
-            df_allergen["name"].tolist(),
+            "⚠️ 警戒するアレルゲンを選択（全28項目から選択可能）",
+            ALL_28_ALLERGENS,
             placeholder="アレルゲンを選択...",
         )
 
         danger_dates = []
         if selected_allergens:
+            # 今月使われていないアレルゲンが選択された場合メッセージを表示
+            selected_unused = [
+                a for a in selected_allergens if a in unused_allergens
+            ]
+            if selected_unused:
+                st.info(
+                    f"🟢 選択されたアレルゲンのうち「**{'・'.join(selected_unused)}**」は今月一度も給食に使用されません。"
+                )
+
             placeholders = ",".join(["?"] * len(selected_allergens))
             query = f"SELECT DISTINCT date FROM menu_allergens WHERE allergen IN ({placeholders})"
             df_danger = pd.read_sql(query, conn, params=selected_allergens)
@@ -386,7 +438,6 @@ if uploaded:
 
         st.subheader(f"📅 {year}年 {month}月 カレンダー")
 
-        # 曜日ヘッダー
         week_days = ["月", "火", "水", "木", "金", "土", "日"]
         header_cols = st.columns(7)
         for idx, day_name in enumerate(week_days):
@@ -397,7 +448,6 @@ if uploaded:
 
         cal = calendar.monthcalendar(year, month)
 
-        # 標準のst.columnsで描画（スマホでタップしやすい押しボタンサイズ）
         for week in cal:
             cols = st.columns(7)
             for idx, day in enumerate(week):
