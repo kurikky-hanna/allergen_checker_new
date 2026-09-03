@@ -193,7 +193,6 @@ def build_date_dish_map(pdf_path, all_dfs):
                             .replace("\n", "")
                         )
 
-                        # 該当する記号を判定してマークを取得
                         found_mark = None
                         if any(m in cell for m in ["○", "O", "0"]):
                             found_mark = "○"
@@ -267,7 +266,11 @@ def process_pdf(pdf_path):
 st.set_page_config(
     page_title="給食アレルゲン調査機", page_icon="🍔", layout="centered"
 )
-
+st.write("⚠️ 大切なお知らせ"
+    "このアプリの結果だけで判断せず、必ず学校から配布された原本の資料も確認してください。",
+    "PDFの形式や記載方法によっては、正しく読み取れない場合があります。",
+    "※このアプリはアレルギーの有無や安全性を保証するものではありません。"
+    )
 st.title("給食アレルゲン調査機🍔")
 uploaded = st.file_uploader(
     "学校から配布された「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。",
@@ -299,13 +302,11 @@ if uploaded:
         "SELECT DISTINCT date FROM menu_allergens ORDER BY date", conn
     )
 
-    # DB内に実際に存在する（検出された）アレルゲンリスト
     df_allergen = pd.read_sql(
         "SELECT DISTINCT name FROM allergen WHERE lang='ja'", conn
     )
     detected_allergens = df_allergen["name"].tolist()
 
-    # 🟢 検出されなかった（＝今月の給食には入っていない）アレルゲンリスト
     unused_allergens = [
         item for item in ALL_28_ALLERGENS if item not in detected_allergens
     ]
@@ -316,7 +317,6 @@ if uploaded:
         if month_match:
             detected_month = int(month_match.group(1))
 
-    # 今月のアレルゲン安全診断ステータス表示
     with st.expander(
         f"📋 今月（{detected_month}月）のアレルゲン使用状況のチェック結果を見る",
         expanded=False,
@@ -354,6 +354,13 @@ if uploaded:
             ALL_28_ALLERGENS,
         )
 
+        # 💡 マークによる絞り込み機能の追加
+        mark_filter = st.radio(
+            "表示する種類を選択",
+            ["すべて", "○（直接使用）のみ", "▲（コンタミ等）のみ"],
+            horizontal=True
+        )
+
         if target_allergens:
             selected_detected = [
                 a for a in target_allergens if a in detected_allergens
@@ -370,11 +377,18 @@ if uploaded:
 
             if selected_detected:
                 placeholders = ",".join(["?"] * len(selected_detected))
-                # 💡 mark列もSQLで取得[cite: 1]
+                
+                # ラジオボタンの選択に応じてSQLのWHERE句を変更
+                mark_condition = ""
+                if mark_filter == "○（直接使用）のみ":
+                    mark_condition = "AND mark = '○'"
+                elif mark_filter == "▲（コンタミ等）のみ":
+                    mark_condition = "AND mark = '▲'"
+
                 query = f"""
                     SELECT date, dish, allergen, mark
                     FROM menu_allergens
-                    WHERE allergen IN ({placeholders})
+                    WHERE allergen IN ({placeholders}) {mark_condition}
                     ORDER BY 
                         CAST(substr(date, 1, instr(date, '/') - 1) AS INTEGER),
                         CAST(substr(date, instr(date, '/') + 1, instr(date, '(') - instr(date, '/') - 1) AS INTEGER)
@@ -397,7 +411,6 @@ if uploaded:
                                 unsafe_allow_html=True,
                             )
 
-                            # 💡 markごとにグループ化して表示[cite: 1]
                             grouped_by_date = df_allergen_items.groupby(
                                 "date", sort=False
                             )
@@ -415,6 +428,8 @@ if uploaded:
                                     "<div style='margin-bottom: 8px;'></div>",
                                     unsafe_allow_html=True,
                                 )
+                else:
+                    st.info("条件に一致するメニューは見つかりませんでした。")
 
     # -----------------------------
     # Tab 2: カレンダー表示
@@ -488,7 +503,6 @@ if uploaded:
                             ):
                                 st.markdown(f"### 📅 【{date_label}】")
 
-                                # アレルゲンとマークでグループ化
                                 grouped = df_day_menu.groupby(
                                     ["アレルゲン", "マーク"]
                                 )
