@@ -266,12 +266,13 @@ def process_pdf(pdf_path):
 st.set_page_config(
     page_title="給食アレルゲン調査機", page_icon="🍔", layout="centered"
 )
+
+st.title("給食アレルゲン調査機🍔")
 st.write("⚠️ 大切なお知らせ"
     "このアプリの結果だけで判断せず、必ず学校から配布された原本の資料も確認してください。",
     "PDFの形式や記載方法によっては、正しく読み取れない場合があります。",
     "※このアプリはアレルギーの有無や安全性を保証するものではありません。"
     )
-st.title("給食アレルゲン調査機🍔")
 uploaded = st.file_uploader(
     "学校から配布された「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。",
     type=["pdf"],
