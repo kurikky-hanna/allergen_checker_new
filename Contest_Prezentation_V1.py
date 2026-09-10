@@ -268,7 +268,7 @@ st.set_page_config(
 )
 
 st.title("給食アレルゲン調査機🍔")
-st.title("学校から配布された「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。")
+st.write("学校から配布された「食物アレルギー原因食品一覧表」のPDFをアップロードしてください。")
 uploaded = st.file_uploader(
     " ",
     type=["pdf"],
