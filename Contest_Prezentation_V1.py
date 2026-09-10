@@ -373,7 +373,7 @@ if uploaded:
             if selected_unused:
                 unused_str = "・".join(selected_unused)
                 st.success(
-                    f"🟢 今月の給食献立表では、 ** {unused_str} ** の使用は確認されませんでした。"
+                    f"🟢 今月の給食献立表では、 **{unused_str}** の使用は確認されませんでした。"
                 )
 
             if selected_detected:
