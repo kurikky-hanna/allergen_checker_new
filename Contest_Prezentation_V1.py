@@ -547,5 +547,5 @@ if uploaded:
     conn.close()
 
 st.write("---")
-st.write("製作者：木村 陸")
-st.write('お問い合わせ: "rikukimura0603@gmail.com"')
+
+
